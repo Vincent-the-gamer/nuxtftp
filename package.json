@@ -1,0 +1,20 @@
+{
+  "name": "nuxtftp",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview --host 0.0.0.0",
+    "start": "set HOST=0.0.0.0&&node .output/server/index.mjs",
+    "postinstall": "nuxt prepare"
+  },
+  "dependencies": {
+    "basic-ftp": "^6.2.4",
+    "iconv-lite": "^0.7.3",
+    "nuxt": "^4.6.3",
+    "vue": "^3.5.44",
+    "vue-router": "^5.4.0"
+  }
+}
