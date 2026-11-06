@@ -1,6 +1,6 @@
 # nuxtftp
 
-一个跑在浏览器里的 FTP 客户端。界面是 Nuxt 4 + Vue 3 的单页应用（标题处显示为「FTP 客户端」），真正的 FTP 会话由 Nitro 服务端通过 [`basic-ftp`](https://github.com/patrickjuchli/basic-ftp) 建立并持有——浏览器不直接说 FTP。
+一个跑在浏览器里的 FTP 客户端。界面是 Nuxt 4 + Vue 3 的单页应用，真正的 FTP 会话由 Nitro 服务端通过 [`basic-ftp`](https://github.com/patrickjuchli/basic-ftp) 建立并持有——浏览器不直连FTP。
 
 [English](README.md) | 简体中文
 

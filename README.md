@@ -1,6 +1,6 @@
 # nuxtftp
 
-A web-based FTP client. The UI is a single-page Nuxt 4 + Vue 3 app (the header calls itself "FTP Desk"), and the actual FTP sessions are opened and held by the Nitro server through [`basic-ftp`](https://github.com/patrickjuchli/basic-ftp) — the browser never speaks FTP.
+A web-based FTP client. The UI is a single-page Nuxt 4 + Vue 3 app, and the actual FTP sessions are opened and held by the Nitro server through [`basic-ftp`](https://github.com/patrickjuchli/basic-ftp) — the browser never directly connect FTP.
 
 English | [简体中文](README.zh_cn.md)
 
