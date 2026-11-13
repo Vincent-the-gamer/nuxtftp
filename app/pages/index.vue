@@ -28,7 +28,7 @@
     </div>
 
     <!-- Connection modal -->
-    <div v-if="showConnModal" class="modal-backdrop" @click.self="showConnModal = false">
+    <div v-if="showConnModal" class="modal-backdrop" @mousedown.self="backdropDown = true" @click.self="onBackdropClose(() => showConnModal = false)">
       <div class="modal">
         <h3>{{ t('conn.modalTitle') }}</h3>
         <div class="field">
@@ -103,7 +103,13 @@
       </div>
     </div>
 
-    <div class="table-wrap" @dragover.prevent="dragOver = true" @dragleave="dragOver = false" @drop.prevent="onDrop; dragOver = false" :class="{ 'drag-over': dragOver }">
+    <div
+      class="table-wrap"
+      @dragover="onTableDragOver"
+      @dragleave="onTableDragLeave"
+      @drop="onTableDrop"
+      :class="{ 'drag-over': dragOver }"
+    >
       <div v-if="dragOver" class="drop-overlay">Drop files here to upload</div>
       <table v-if="items.length">
         <thead>
@@ -116,7 +122,17 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="it in items" :key="it.name">
+          <tr
+            v-for="it in items"
+            :key="it.name"
+            draggable="true"
+            :class="{ 'drop-target': dragMoveTarget === it.name && it.type === 'dir' }"
+            @dragstart="onRowDragStart($event, it)"
+            @dragend="onRowDragEnd"
+            @dragover="onRowDragOver($event, it)"
+            @dragleave="onRowDragLeave($event, it)"
+            @drop="onRowDrop($event, it)"
+          >
             <td>
               <div class="name-cell">
                 <span class="type-tag">{{ it.type === 'dir' ? 'dir' : 'file' }}</span>
@@ -129,9 +145,9 @@
             <td class="muted">{{ formatDate(it.modified) }}</td>
             <td class="right">
               <div class="actions">
-                
                 <button v-if="it.type !== 'dir'" class="link-btn" @click="download(it)">{{ t('files.download') }}</button>
                 <button class="link-btn" @click="startRename(it)">{{ t('files.rename') }}</button>
+                <button class="link-btn" @click="openMove(it)">{{ t('files.move') }}</button>
                 <button class="link-btn danger" @click="removeItem(it)">{{ t('files.delete') }}</button>
               </div>
             </td>
@@ -152,7 +168,7 @@
   </div>
 
   <!-- New folder modal -->
-  <div v-if="showMkdir" class="modal-backdrop" @click.self="showMkdir = false">
+  <div v-if="showMkdir" class="modal-backdrop" @mousedown.self="backdropDown = true" @click.self="onBackdropClose(() => showMkdir = false)">
     <div class="modal">
       <h3>{{ t('modal.newFolder') }}</h3>
       <input v-model="newFolderName" class="input" :placeholder="t('modal.newFolderPlaceholder')" @keyup.enter="createFolder" />
@@ -164,7 +180,7 @@
   </div>
 
   <!-- Rename modal -->
-  <div v-if="renameTarget" class="modal-backdrop" @click.self="renameTarget = null">
+  <div v-if="renameTarget" class="modal-backdrop" @mousedown.self="backdropDown = true" @click.self="onBackdropClose(() => renameTarget = null)">
     <div class="modal">
       <h3>{{ t('modal.rename') }}</h3>
       <input v-model="renameTo" class="input" @keyup.enter="doRename" />
@@ -175,7 +191,40 @@
     </div>
   </div>
 
-  <!-- Preview modal removed -->
+  <!-- Move modal -->
+  <div v-if="moveTarget" class="modal-backdrop" @mousedown.self="backdropDown = true" @click.self="onBackdropClose(closeMove)">
+    <div class="modal move-modal">
+      <h3>{{ t('modal.move') }}: {{ moveTarget.name }}</h3>
+      <div class="muted" style="font-size:12px; margin-bottom:8px;">{{ t('modal.moveTo') }}: {{ moveDest || '/' }}</div>
+      <div class="tree-box">
+        <div
+          class="tree-node"
+          :class="{ selected: moveDest === '/' }"
+          @click="moveDest = '/'"
+        >
+          <span class="tree-toggle-spacer"></span>
+          <span class="tree-label">/ {{ t('modal.moveRoot') }}</span>
+        </div>
+        <div
+          v-for="n in visibleMoveNodes"
+          :key="n.path"
+          class="tree-node"
+          :style="{ paddingLeft: (12 + n.depth * 16) + 'px' }"
+          :class="{ selected: moveDest === n.path, disabled: isInvalidMoveDest(n.path) }"
+          @click="!isInvalidMoveDest(n.path) && (moveDest = n.path)"
+        >
+          <button class="tree-toggle" @click.stop="toggleMoveNode(n)">{{ n.expanded ? '▾' : '▸' }}</button>
+          <span class="tree-label">{{ n.name }}</span>
+          <span v-if="n.loading" class="muted" style="font-size:11px;">…</span>
+        </div>
+        <div v-if="moveTreeLoading" class="muted" style="padding:8px 12px; font-size:12px;">{{ t('files.loading') }}</div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" @click="closeMove">{{ t('conn.cancel') }}</button>
+        <button class="btn primary" :disabled="!canConfirmMove" @click="confirmMove">{{ t('modal.move') }}</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Toast -->
   <div v-if="toast" class="toast" :class="{ err: toast.err }">
@@ -214,7 +263,13 @@ const showMkdir = ref(false)
 const newFolderName = ref('')
 const renameTarget = ref<any>(null)
 const renameTo = ref('')
+const backdropDown = ref(false)
 const toast = ref<{ msg: string; err: boolean; progress?: number } | null>(null)
+
+function onBackdropClose(close: () => void) {
+  if (backdropDown.value) close()
+  backdropDown.value = false
+}
 
 // preview state
 
@@ -225,15 +280,33 @@ const toast = ref<{ msg: string; err: boolean; progress?: number } | null>(null)
 const uploadProgress = ref<number | null>(null)
 const downloadProgress = ref<number | null>(null)
 const dragOver = ref(false)
+const draggingItem = ref<any>(null)
+const dragMoveTarget = ref<string | null>(null)
 const mouseX = ref(0)
 const mouseY = ref(0)
 const bgCanvas = ref<HTMLCanvasElement | null>(null)
+
+const moveTarget = ref<any>(null)
+const moveDest = ref('/')
+const moveTree = ref<any[]>([])
+const moveTreeLoading = ref(false)
 
 let toastTimer: any = null
 function showToast(msg: string, err = false, progress?: number) {
   toast.value = { msg, err, progress }
   if (toastTimer) clearTimeout(toastTimer)
   toastTimer = setTimeout(() => { toast.value = null }, 3000)
+}
+
+function joinPath(base: string, name: string) {
+  if (!base || base === '/') return '/' + name
+  return base.replace(/\/+$/, '') + '/' + name
+}
+function isInternalDrag(e: DragEvent) {
+  return Array.from(e.dataTransfer?.types || []).includes('application/x-nuxtftp-path')
+}
+function hasFilesDrag(e: DragEvent) {
+  return Array.from(e.dataTransfer?.types || []).includes('Files')
 }
 
 // load saved connections
@@ -340,10 +413,32 @@ function resetTilt(el: HTMLElement | null) {
 onMounted(() => {
   if (!import.meta.client) return
   let dragCounter = 0
-  const onDragEnter = (e: DragEvent) => { e.preventDefault(); dragCounter++; dragOver.value = true }
-  const onDragOver = (e: DragEvent) => { e.preventDefault(); dragOver.value = true }
-  const onDragLeave = (e: DragEvent) => { dragCounter--; if (dragCounter <= 0) { dragCounter = 0; dragOver.value = false } }
-  const onDrop = (e: DragEvent) => { e.preventDefault(); dragCounter = 0; dragOver.value = false; const files = e.dataTransfer?.files; if (files && files.length) { const fake = { target: { files, value: '' } } as any; onUpload(fake) } }
+  const onDragEnter = (e: DragEvent) => {
+    if (!hasFilesDrag(e) || isInternalDrag(e)) return
+    e.preventDefault()
+    dragCounter++
+    dragOver.value = true
+  }
+  const onDragOver = (e: DragEvent) => {
+    if (!hasFilesDrag(e) || isInternalDrag(e)) return
+    e.preventDefault()
+    dragOver.value = true
+  }
+  const onDragLeave = (e: DragEvent) => {
+    if (!hasFilesDrag(e) || isInternalDrag(e)) return
+    dragCounter--
+    if (dragCounter <= 0) { dragCounter = 0; dragOver.value = false }
+  }
+  const onDrop = (e: DragEvent) => {
+    if (isInternalDrag(e)) return
+    const files = e.dataTransfer?.files
+    if (!files || !files.length) return
+    e.preventDefault()
+    dragCounter = 0
+    dragOver.value = false
+    const fake = { target: { files, value: '' } } as any
+    onUpload(fake)
+  }
   window.addEventListener('dragenter', onDragEnter)
   window.addEventListener('dragover', onDragOver)
   window.addEventListener('dragleave', onDragLeave)
@@ -487,6 +582,145 @@ async function removeItem(it: any) {
   } catch (e: any) {
     showToast(e?.data?.statusMessage || e?.message || t('toast.failed'), true)
   }
+}
+
+function onRowDragStart(e: DragEvent, it: any) {
+  draggingItem.value = it
+  e.dataTransfer?.setData('application/x-nuxtftp-path', JSON.stringify({ name: it.name, type: it.type }))
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+}
+function onRowDragEnd() {
+  draggingItem.value = null
+  dragMoveTarget.value = null
+}
+function onRowDragOver(e: DragEvent, it: any) {
+  if (!isInternalDrag(e)) return
+  if (it.type !== 'dir') return
+  if (draggingItem.value && draggingItem.value.name === it.name) return
+  e.preventDefault()
+  e.stopPropagation()
+  dragMoveTarget.value = it.name
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+}
+function onRowDragLeave(e: DragEvent, it: any) {
+  if (dragMoveTarget.value === it.name) dragMoveTarget.value = null
+}
+async function onRowDrop(e: DragEvent, it: any) {
+  if (!isInternalDrag(e)) return
+  if (it.type !== 'dir') return
+  e.preventDefault()
+  e.stopPropagation()
+  const data = e.dataTransfer?.getData('application/x-nuxtftp-path')
+  dragMoveTarget.value = null
+  if (!data) return
+  try {
+    const dragged = JSON.parse(data)
+    if (!dragged?.name || dragged.name === it.name) return
+    const destDir = joinPath(currentPath.value, it.name)
+    await moveItemToPath(dragged, destDir)
+  } catch {}
+}
+function onTableDragOver(e: DragEvent) {
+  if (isInternalDrag(e)) { dragOver.value = false; return }
+  if (!hasFilesDrag(e)) return
+  e.preventDefault()
+  dragOver.value = true
+}
+function onTableDragLeave(e: DragEvent) {
+  if (isInternalDrag(e)) return
+  dragOver.value = false
+}
+function onTableDrop(e: DragEvent) {
+  if (isInternalDrag(e)) { dragOver.value = false; return }
+  if (!hasFilesDrag(e)) return
+  e.preventDefault()
+  dragOver.value = false
+  const files = e.dataTransfer?.files
+  if (files && files.length) {
+    const fake = { target: { files, value: '' } } as any
+    onUpload(fake)
+  }
+}
+async function moveItemToPath(dragged: any, destDir: string) {
+  const from = joinPath(currentPath.value, dragged.name)
+  const to = joinPath(destDir, dragged.name)
+  if (from === to) return
+  if (dragged.type === 'dir' && (to === from || to.startsWith(from + '/'))) {
+    showToast(t('toast.failed'), true)
+    return
+  }
+  try {
+    await $fetch('/api/ftp/rename', { method: 'POST', body: { id: conn.value.id, from, to } })
+    showToast(t('toast.moved'))
+    await loadList(currentPath.value)
+  } catch (e: any) {
+    showToast(e?.data?.statusMessage || e?.message || t('toast.failed'), true)
+  }
+}
+
+function openMove(it: any) {
+  moveTarget.value = it
+  moveDest.value = '/'
+  moveTree.value = []
+  loadMoveTree()
+}
+function closeMove() {
+  moveTarget.value = null
+  moveTree.value = []
+}
+async function loadMoveTree() {
+  moveTreeLoading.value = true
+  try {
+    const res: any = await $fetch('/api/ftp/list', { query: { id: conn.value.id, path: '/' } })
+    moveTree.value = (res.items || [])
+      .filter((x: any) => x.type === 'dir')
+      .map((x: any) => ({ name: x.name, path: '/' + x.name, depth: 0, children: [], expanded: false, loaded: false, loading: false }))
+  } catch {
+    moveTree.value = []
+  } finally {
+    moveTreeLoading.value = false
+  }
+}
+async function toggleMoveNode(node: any) {
+  if (node.expanded) { node.expanded = false; return }
+  node.expanded = true
+  if (node.loaded) return
+  node.loading = true
+  try {
+    const res: any = await $fetch('/api/ftp/list', { query: { id: conn.value.id, path: node.path } })
+    node.children = (res.items || [])
+      .filter((x: any) => x.type === 'dir')
+      .map((x: any) => ({ name: x.name, path: joinPath(node.path, x.name), depth: node.depth + 1, children: [], expanded: false, loaded: false, loading: false }))
+    node.loaded = true
+  } catch {
+    node.children = []
+    node.loaded = true
+  } finally {
+    node.loading = false
+  }
+}
+function isInvalidMoveDest(dest: string) {
+  if (!moveTarget.value) return false
+  const from = joinPath(currentPath.value, moveTarget.value.name)
+  const to = joinPath(dest, moveTarget.value.name)
+  if (dest === currentPath.value) return true
+  if (from === to) return true
+  if (moveTarget.value.type === 'dir' && (dest === from || dest.startsWith(from + '/'))) return true
+  return false
+}
+function flattenMoveNodes(nodes: any[], out: any[] = []) {
+  for (const n of nodes) {
+    out.push(n)
+    if (n.expanded && n.children?.length) flattenMoveNodes(n.children, out)
+  }
+  return out
+}
+const visibleMoveNodes = computed(() => flattenMoveNodes(moveTree.value))
+const canConfirmMove = computed(() => !!moveTarget.value && !isInvalidMoveDest(moveDest.value))
+async function confirmMove() {
+  if (!moveTarget.value || !canConfirmMove.value) return
+  await moveItemToPath(moveTarget.value, moveDest.value)
+  closeMove()
 }
 
 async function onUpload(e: Event) {
